@@ -1,743 +1,528 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
-import sqlite3
-import csv
-import xml.etree.ElementTree as ET
-import json
-import os
+# -*- coding: utf-8 -*-
+"""Система управления базами данных с готовой тестовой БД (Лабораторная работа №6)"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from datetime import datetime
+import io
+import random
 
-# Проверка наличия дополнительных библиотек
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
+# ============================================
+# ЧАСТЬ 1: ТЕСТОВАЯ БАЗА ДАННЫХ
+# ============================================
 
-try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
+def create_sample_database():
+    """
+    Создание готовой тестовой базы данных
+    """
+    
+    # Данные для 15 товаров
+    data = {
+        'ID': [f'PR00{i}' for i in range(1, 16)],
+        'Название': [
+            'Ноутбук', 'Смартфон', 'Планшет', 'Наушники', 'Мышь',
+            'Клавиатура', 'Монитор', 'Флешка 32GB', 'Внешний диск', 'Принтер',
+            'Колонки', 'Веб-камера', 'Микрофон', 'Коврик для мыши', 'Чехол для ноутбука'
+        ],
+        'Категория': [
+            'Электроника', 'Электроника', 'Электроника', 'Аксессуары', 'Аксессуары',
+            'Аксессуары', 'Электроника', 'Накопители', 'Накопители', 'Периферия',
+            'Аксессуары', 'Периферия', 'Периферия', 'Аксессуары', 'Аксессуары'
+        ],
+        'Цена': [
+            45000, 25000, 18000, 3500, 1200,
+            2500, 15000, 800, 4500, 8500,
+            3200, 2100, 2800, 500, 1500
+        ],
+        'Количество': [
+            15, 23, 8, 45, 60,
+            32, 12, 100, 25, 7,
+            18, 14, 9, 80, 30
+        ],
+        'Рейтинг': [
+            4.8, 4.9, 4.5, 4.3, 4.6,
+            4.4, 4.7, 4.2, 4.5, 4.1,
+            4.3, 4.0, 4.4, 4.8, 4.2
+        ],
+        'Страна': [
+            'Китай', 'Китай', 'Китай', 'Китай', 'Китай',
+            'Китай', 'Корея', 'Китай', 'США', 'Китай',
+            'Китай', 'Китай', 'Китай', 'Китай', 'Китай'
+        ],
+        'Год': [
+            2024, 2024, 2023, 2024, 2024,
+            2023, 2024, 2024, 2023, 2022,
+            2024, 2023, 2023, 2024, 2024
+        ],
+        'Беспроводной': [
+            True, True, True, True, True,
+            True, False, False, False, False,
+            True, False, True, False, False
+        ],
+        'Вес': [
+            1800, 180, 500, 250, 100,
+            800, 3500, 20, 200, 5000,
+            1200, 150, 350, 200, 600
+        ]
+    }
+    
+    # Создаем DataFrame
+    df = pd.DataFrame(data)
+    
+    # Добавляем вычисляемый столбец
+    df['Общая стоимость'] = df['Цена'] * df['Количество']
+    
+    return df, "Товары на складе"
 
+
+# ============================================
+# ЧАСТЬ 2: СИСТЕМА УПРАВЛЕНИЯ БАЗАМИ ДАННЫХ
+# ============================================
 
 class DatabaseManager:
-    """Класс для управления базой данных SQLite"""
+    """
+    Класс для управления базами данных (таблицами данных)
+    """
     
-    def __init__(self, db_path=":memory:"):
-        self.db_path = db_path
-        self.conn = None
-        self.cursor = None
-        self.current_table = None
-        self.connect()
-    
-    def connect(self):
-        """Подключение к базе данных"""
+    def __init__(self, initial_data=None, initial_name="Новая БД"):
+        self.data = initial_data
+        self.current_table_name = initial_name
+        self.supported_formats = {
+            'csv': 'CSV (разделители запятые)',
+            'txt': 'TXT (текстовый файл)',
+            'xlsx': 'Excel',
+            'json': 'JSON'
+        }
+        
+    def create_database(self):
+        """Создание новой базы данных"""
+        print("\n" + "="*50)
+        print("СОЗДАНИЕ НОВОЙ БАЗЫ ДАННЫХ")
+        print("="*50)
+        
+        table_name = input("Введите название базы данных: ").strip()
+        if table_name:
+            self.current_table_name = table_name
+        
         try:
-            self.conn = sqlite3.connect(self.db_path)
-            self.cursor = self.conn.cursor()
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось подключиться к БД: {e}")
-            return False
-    
-    def create_table(self, table_name, columns):
-        """Создание таблицы"""
-        try:
-            columns_def = ", ".join([f"{col['name']} {col['type']}" for col in columns])
-            query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY AUTOINCREMENT, {columns_def})"
-            self.cursor.execute(query)
-            self.conn.commit()
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать таблицу: {e}")
-            return False
-    
-    def insert_record(self, table_name, data):
-        """Вставка записи"""
-        try:
-            columns = ", ".join(data.keys())
-            placeholders = ", ".join(["?" for _ in data])
-            query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-            self.cursor.execute(query, tuple(data.values()))
-            self.conn.commit()
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось вставить запись: {e}")
-            return False
-    
-    def get_all_records(self, table_name):
-        """Получение всех записей"""
-        try:
-            query = f"SELECT * FROM {table_name}"
-            self.cursor.execute(query)
-            return self.cursor.fetchall()
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось получить записи: {e}")
-            return []
-    
-    def get_table_columns(self, table_name):
-        """Получение структуры таблицы"""
-        try:
-            query = f"PRAGMA table_info({table_name})"
-            self.cursor.execute(query)
-            return self.cursor.fetchall()
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось получить структуру: {e}")
-            return []
-    
-    def update_record(self, table_name, record_id, data):
-        """Обновление записи"""
-        try:
-            set_clause = ", ".join([f"{key} = ?" for key in data.keys()])
-            query = f"UPDATE {table_name} SET {set_clause} WHERE id = ?"
-            self.cursor.execute(query, tuple(list(data.values()) + [record_id]))
-            self.conn.commit()
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось обновить запись: {e}")
-            return False
-    
-    def delete_record(self, table_name, record_id):
-        """Удаление записи"""
-        try:
-            query = f"DELETE FROM {table_name} WHERE id = ?"
-            self.cursor.execute(query, (record_id,))
-            self.conn.commit()
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось удалить запись: {e}")
-            return False
-    
-    def search_records(self, table_name, column, value):
-        """Поиск записей"""
-        try:
-            query = f"SELECT * FROM {table_name} WHERE {column} LIKE ?"
-            self.cursor.execute(query, (f"%{value}%",))
-            return self.cursor.fetchall()
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось выполнить поиск: {e}")
-            return []
-    
-    def sort_records(self, table_name, column, order="ASC"):
-        """Сортировка записей"""
-        try:
-            query = f"SELECT * FROM {table_name} ORDER BY {column} {order}"
-            self.cursor.execute(query)
-            return self.cursor.fetchall()
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось выполнить сортировку: {e}")
-            return []
-    
-    def get_tables(self):
-        """Получение списка таблиц"""
-        try:
-            query = "SELECT name FROM sqlite_master WHERE type='table'"
-            self.cursor.execute(query)
-            return [row[0] for row in self.cursor.fetchall()]
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось получить список таблиц: {e}")
-            return []
-    
-    def export_csv(self, table_name, file_path):
-        """Экспорт в CSV"""
-        try:
-            records = self.get_all_records(table_name)
-            columns = self.get_table_columns(table_name)
-            col_names = [col[1] for col in columns]
+            n_rows = int(input("Введите количество строк: "))
+            n_cols = int(input("Введите количество столбцов: "))
             
-            with open(file_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(col_names)
-                writer.writerows(records)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать в CSV: {e}")
-            return False
-    
-    def import_csv(self, table_name, file_path, columns):
-        """Импорт из CSV"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                header = next(reader)  # Пропускаем заголовок
-                
-                for row in reader:
-                    if len(row) == len(columns):
-                        data = {col['name']: row[i] for i, col in enumerate(columns)}
-                        self.insert_record(table_name, data)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось импортировать из CSV: {e}")
-            return False
-    
-    def export_xml(self, table_name, file_path):
-        """Экспорт в XML"""
-        try:
-            records = self.get_all_records(table_name)
-            columns = self.get_table_columns(table_name)
-            col_names = [col[1] for col in columns]
+            columns = []
+            for i in range(n_cols):
+                col_name = input(f"Введите название столбца {i+1}: ").strip()
+                if not col_name:
+                    col_name = f"Столбец_{i+1}"
+                columns.append(col_name)
             
-            root = ET.Element("database")
-            table_elem = ET.SubElement(root, "table", name=table_name)
+            data = {col: [''] * n_rows for col in columns}
+            self.data = pd.DataFrame(data)
             
-            for record in records:
-                row_elem = ET.SubElement(table_elem, "row")
-                for i, col_name in enumerate(col_names):
-                    field_elem = ET.SubElement(row_elem, col_name)
-                    field_elem.text = str(record[i])
+            print(f"\n✅ База данных '{self.current_table_name}' успешно создана!")
+            print(f"Размер: {n_rows} строк × {n_cols} столбцов")
+            self.view_data()
             
-            tree = ET.ElementTree(root)
-            tree.write(file_path, encoding='utf-8', xml_declaration=True)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать в XML: {e}")
-            return False
+        except ValueError:
+            print("❌ Ошибка: введите корректные числовые значения")
+            self.data = None
     
-    def export_json(self, table_name, file_path):
-        """Экспорт в JSON"""
-        try:
-            records = self.get_all_records(table_name)
-            columns = self.get_table_columns(table_name)
-            col_names = [col[1] for col in columns]
-            
-            data = []
-            for record in records:
-                row_dict = {col_names[i]: record[i] for i in range(len(col_names))}
-                data.append(row_dict)
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать в JSON: {e}")
-            return False
-    
-    def close(self):
-        """Закрытие соединения"""
-        if self.conn:
-            self.conn.close()
-
-
-class DatabaseApp:
-    """Основной класс приложения"""
-    
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Система управления базами данных v1.0")
-        self.root.geometry("1400x900")
-        
-        self.db = DatabaseManager()
-        self.current_table = None
-        self.tree = None
-        
-        self._create_widgets()
-        self._refresh_tables_list()
-    
-    def _create_widgets(self):
-        """Создание элементов интерфейса"""
-        
-        # Верхняя панель инструментов
-        toolbar = ttk.Frame(self.root)
-        toolbar.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(toolbar, text="Новая БД", command=self.new_database).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Открыть БД", command=self.open_database).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Создать таблицу", command=self.create_table).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
-        ttk.Button(toolbar, text="Добавить запись", command=self.add_record).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Редактировать", command=self.edit_record).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Удалить запись", command=self.delete_record).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
-        ttk.Button(toolbar, text="Импорт CSV", command=self.import_csv).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Экспорт CSV", command=self.export_csv).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Экспорт XML", command=self.export_xml).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Экспорт JSON", command=self.export_json).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
-        ttk.Button(toolbar, text="Поиск", command=self.search_records).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Сортировка", command=self.sort_records).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
-        ttk.Button(toolbar, text="Визуализация", command=self.visualize_data).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Отчёт", command=self.generate_report).pack(side=tk.LEFT, padx=2)
-        
-        # Основная область
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Левая панель - список таблиц
-        tables_frame = ttk.LabelFrame(main_frame, text="Таблицы")
-        tables_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
-        
-        self.tables_listbox = tk.Listbox(tables_frame, width=25)
-        self.tables_listbox.pack(fill=tk.BOTH, expand=True)
-        self.tables_listbox.bind('<<ListboxSelect>>', self._on_table_select)
-        
-        ttk.Button(tables_frame, text="Обновить", command=self._refresh_tables_list).pack(fill=tk.X, pady=5)
-        
-        # Центральная панель - данные таблицы
-        data_frame = ttk.LabelFrame(main_frame, text="Данные")
-        data_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Treeview для отображения данных
-        tree_frame = ttk.Frame(data_frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.tree = ttk.Treeview(tree_frame)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.tree.configure(yscrollcommand=tree_scroll.set)
-        
-        # Нижняя панель статуса
-        status_frame = ttk.Frame(self.root)
-        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        self.status_label = ttk.Label(status_frame, text="Готов к работе", relief=tk.SUNKEN)
-        self.status_label.pack(fill=tk.X, padx=5, pady=2)
-        
-        self.records_label = ttk.Label(status_frame, text="Записей: 0")
-        self.records_label.pack(side=tk.RIGHT, padx=10)
-    
-    def _refresh_tables_list(self):
-        """Обновление списка таблиц"""
-        self.tables_listbox.delete(0, tk.END)
-        tables = self.db.get_tables()
-        for table in tables:
-            if table != 'sqlite_sequence':  # Системная таблица
-                self.tables_listbox.insert(tk.END, table)
-        self.status_label.config(text="Список таблиц обновлён")
-    
-    def _on_table_select(self, event):
-        """Выбор таблицы из списка"""
-        selection = self.tables_listbox.curselection()
-        if selection:
-            self.current_table = self.tables_listbox.get(selection[0])
-            self._load_table_data()
-            self.status_label.config(text=f"Выбрана таблица: {self.current_table}")
-    
-    def _load_table_data(self):
-        """Загрузка данных таблицы в Treeview"""
-        if not self.current_table:
+    def view_data(self):
+        """Просмотр данных"""
+        if self.data is None:
+            print("❌ Нет данных для просмотра")
             return
         
-        # Очистка Treeview
-        self.tree.delete(*self.tree.get_children())
+        print("\n" + "="*50)
+        print(f"📊 ТАБЛИЦА: {self.current_table_name}")
+        print("="*50)
         
-        # Получение структуры таблицы
-        columns_info = self.db.get_table_columns(self.current_table)
-        col_names = [col[1] for col in columns_info]
+        print(f"Размер: {self.data.shape[0]} строк × {self.data.shape[1]} столбцов")
+        print("\n📋 Столбцы:")
+        for i, col in enumerate(self.data.columns, 1):
+            dtype = self.data[col].dtype
+            print(f"  {i}. {col} (тип: {dtype})")
         
-        # Настройка колонок
-        self.tree["columns"] = col_names
-        self.tree["show"] = "headings"
+        print("\n📋 Первые 5 строк данных:")
+        print("-" * 80)
+        print(self.data.head().to_string(index=False))
         
-        for col in col_names:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=100)
-        
-        # Загрузка данных
-        records = self.db.get_all_records(self.current_table)
-        for record in records:
-            self.tree.insert("", tk.END, values=record)
-        
-        self.records_label.config(text=f"Записей: {len(records)}")
-    
-    def new_database(self):
-        """Создание новой базы данных"""
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".db",
-            filetypes=[("SQLite Database", "*.db"), ("All Files", "*.*")],
-            title="Создать новую базу данных"
-        )
-        
-        if file_path:
-            self.db.close()
-            self.db = DatabaseManager(file_path)
-            self.status_label.config(text=f"Новая БД создана: {os.path.basename(file_path)}")
-            self._refresh_tables_list()
-    
-    def open_database(self):
-        """Открытие существующей базы данных"""
-        file_path = filedialog.askopenfilename(
-            filetypes=[("SQLite Database", "*.db"), ("All Files", "*.*")],
-            title="Открыть базу данных"
-        )
-        
-        if file_path:
-            self.db.close()
-            self.db = DatabaseManager(file_path)
-            self.status_label.config(text=f"БД открыта: {os.path.basename(file_path)}")
-            self._refresh_tables_list()
-    
-    def create_table(self):
-        """Создание новой таблицы"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Создать таблицу")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ttk.Label(dialog, text="Имя таблицы:").pack(pady=5)
-        table_name_entry = ttk.Entry(dialog, width=40)
-        table_name_entry.pack(pady=5)
-        
-        ttk.Label(dialog, text="Колонки (формат: имя:тип, имя:тип):").pack(pady=5)
-        columns_entry = ttk.Entry(dialog, width=40)
-        columns_entry.pack(pady=5)
-        columns_entry.insert(0, "name:TEXT, age:INTEGER, email:TEXT")
-        
-        def create():
-            try:
-                table_name = table_name_entry.get().strip()
-                columns_str = columns_entry.get().strip()
-                
-                if not table_name:
-                    raise ValueError("Введите имя таблицы")
-                
-                columns = []
-                for col in columns_str.split(","):
-                    name, dtype = col.strip().split(":")
-                    columns.append({"name": name.strip(), "type": dtype.strip().upper()})
-                
-                if self.db.create_table(table_name, columns):
-                    self._refresh_tables_list()
-                    self.status_label.config(text=f"Таблица '{table_name}' создана")
-                    dialog.destroy()
-                else:
-                    raise ValueError("Ошибка создания таблицы")
-                
-            except Exception as e:
-                messagebox.showerror("Ошибка", str(e))
-        
-        ttk.Button(dialog, text="Создать", command=create).pack(pady=10)
+        print("\n📊 Основная статистика:")
+        print("-" * 80)
+        print(self.data.describe(include='all').to_string())
     
     def add_record(self):
-        """Добавление записи"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
+        """Добавление новой записи"""
+        if self.data is None:
+            print("❌ Нет базы данных. Сначала создайте или загрузите данные.")
             return
         
-        columns_info = self.db.get_table_columns(self.current_table)
-        col_names = [col[1] for col in columns_info if col[1] != 'id']
+        print("\n" + "="*50)
+        print("➕ ДОБАВЛЕНИЕ НОВОЙ ЗАПИСИ")
+        print("="*50)
         
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Добавить запись")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
+        new_record = {}
+        for col in self.data.columns:
+            value = input(f"Введите значение для '{col}': ").strip()
+            new_record[col] = value
         
-        entries = {}
-        for col_name in col_names:
-            ttk.Label(dialog, text=col_name).pack(pady=2)
-            entry = ttk.Entry(dialog, width=40)
-            entry.pack(pady=2)
-            entries[col_name] = entry
-        
-        def add():
-            try:
-                data = {col: entry.get() for col, entry in entries.items()}
-                if self.db.insert_record(self.current_table, data):
-                    self._load_table_data()
-                    self.status_label.config(text="Запись добавлена")
-                    dialog.destroy()
-                else:
-                    raise ValueError("Ошибка добавления записи")
-            except Exception as e:
-                messagebox.showerror("Ошибка", str(e))
-        
-        ttk.Button(dialog, text="Добавить", command=add).pack(pady=10)
+        self.data = pd.concat([self.data, pd.DataFrame([new_record])], ignore_index=True)
+        print("✅ Новая запись добавлена!")
     
-    def edit_record(self):
-        """Редактирование записи"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
+    def update_record(self):
+        """Обновление записи"""
+        if self.data is None or len(self.data) == 0:
+            print("❌ Нет данных для обновления")
             return
         
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning("Внимание", "Выберите запись для редактирования")
-            return
+        self.view_data()
         
-        item = self.tree.item(selected[0])
-        values = item['values']
-        record_id = values[0]
-        
-        columns_info = self.db.get_table_columns(self.current_table)
-        col_names = [col[1] for col in columns_info if col[1] != 'id']
-        
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Редактировать запись")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        entries = {}
-        for i, col_name in enumerate(col_names):
-            ttk.Label(dialog, text=col_name).pack(pady=2)
-            entry = ttk.Entry(dialog, width=40)
-            entry.pack(pady=2)
-            entry.insert(0, values[i + 1] if i + 1 < len(values) else "")
-            entries[col_name] = entry
-        
-        def save():
-            try:
-                data = {col: entry.get() for col, entry in entries.items()}
-                if self.db.update_record(self.current_table, record_id, data):
-                    self._load_table_data()
-                    self.status_label.config(text="Запись обновлена")
-                    dialog.destroy()
-                else:
-                    raise ValueError("Ошибка обновления записи")
-            except Exception as e:
-                messagebox.showerror("Ошибка", str(e))
-        
-        ttk.Button(dialog, text="Сохранить", command=save).pack(pady=10)
+        try:
+            index = int(input(f"\nВведите номер строки для обновления (0-{len(self.data)-1}): "))
+            
+            if 0 <= index < len(self.data):
+                print(f"\nТекущие значения строки {index}:")
+                for col in self.data.columns:
+                    print(f"  {col}: {self.data.loc[index, col]}")
+                
+                for col in self.data.columns:
+                    new_value = input(f"Новое значение для '{col}' (Enter - оставить без изменений): ").strip()
+                    if new_value:
+                        self.data.loc[index, col] = new_value
+                
+                print("✅ Запись обновлена!")
+            else:
+                print("❌ Неверный индекс")
+                
+        except ValueError:
+            print("❌ Введите корректный номер строки")
     
     def delete_record(self):
         """Удаление записи"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
+        if self.data is None or len(self.data) == 0:
+            print("❌ Нет данных для удаления")
             return
         
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning("Внимание", "Выберите запись для удаления")
-            return
+        self.view_data()
         
-        if messagebox.askyesno("Подтверждение", "Удалить выбранную запись?"):
-            item = self.tree.item(selected[0])
-            record_id = item['values'][0]
-            if self.db.delete_record(self.current_table, record_id):
-                self._load_table_data()
-                self.status_label.config(text="Запись удалена")
-    
-    def import_csv(self):
-        """Импорт из CSV"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
-            return
-        
-        file_path = filedialog.askopenfilename(
-            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
-            title="Импорт из CSV"
-        )
-        
-        if file_path:
-            columns_info = self.db.get_table_columns(self.current_table)
-            columns = [{"name": col[1], "type": col[2]} for col in columns_info if col[1] != 'id']
+        try:
+            index = int(input(f"\nВведите номер строки для удаления (0-{len(self.data)-1}): "))
             
-            if self.db.import_csv(self.current_table, file_path, columns):
-                self._load_table_data()
-                self.status_label.config(text="Данные импортированы из CSV")
-    
-    def export_csv(self):
-        """Экспорт в CSV"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
-            return
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
-            title="Экспорт в CSV"
-        )
-        
-        if file_path:
-            if self.db.export_csv(self.current_table, file_path):
-                self.status_label.config(text="Данные экспортированы в CSV")
-    
-    def export_xml(self):
-        """Экспорт в XML"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
-            return
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".xml",
-            filetypes=[("XML Files", "*.xml"), ("All Files", "*.*")],
-            title="Экспорт в XML"
-        )
-        
-        if file_path:
-            if self.db.export_xml(self.current_table, file_path):
-                self.status_label.config(text="Данные экспортированы в XML")
-    
-    def export_json(self):
-        """Экспорт в JSON"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
-            return
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
-            title="Экспорт в JSON"
-        )
-        
-        if file_path:
-            if self.db.export_json(self.current_table, file_path):
-                self.status_label.config(text="Данные экспортированы в JSON")
-    
-    def search_records(self):
-        """Поиск записей"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
-            return
-        
-        columns_info = self.db.get_table_columns(self.current_table)
-        col_names = [col[1] for col in columns_info if col[1] != 'id']
-        
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Поиск")
-        dialog.geometry("400x200")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ttk.Label(dialog, text="Колонка:").pack(pady=5)
-        column_var = tk.StringVar(value=col_names[0] if col_names else "")
-        column_combo = ttk.Combobox(dialog, textvariable=column_var, values=col_names, width=35)
-        column_combo.pack(pady=5)
-        
-        ttk.Label(dialog, text="Значение:").pack(pady=5)
-        value_entry = ttk.Entry(dialog, width=40)
-        value_entry.pack(pady=5)
-        
-        def search():
-            column = column_var.get()
-            value = value_entry.get()
-            if column and value:
-                records = self.db.search_records(self.current_table, column, value)
-                self._display_search_results(records)
-                self.status_label.config(text=f"Найдено записей: {len(records)}")
-                dialog.destroy()
+            if 0 <= index < len(self.data):
+                self.data = self.data.drop(index).reset_index(drop=True)
+                print("✅ Запись удалена!")
             else:
-                messagebox.showwarning("Внимание", "Заполните все поля")
-        
-        ttk.Button(dialog, text="Найти", command=search).pack(pady=10)
+                print("❌ Неверный индекс")
+                
+        except ValueError:
+            print("❌ Введите корректный номер строки")
     
-    def _display_search_results(self, records):
-        """Отображение результатов поиска"""
-        self.tree.delete(*self.tree.get_children())
-        for record in records:
-            self.tree.insert("", tk.END, values=record)
-        self.records_label.config(text=f"Записей: {len(records)}")
-    
-    def sort_records(self):
-        """Сортировка записей"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
+    def sort_data(self):
+        """Сортировка данных"""
+        if self.data is None or len(self.data) == 0:
+            print("❌ Нет данных для сортировки")
             return
         
-        columns_info = self.db.get_table_columns(self.current_table)
-        col_names = [col[1] for col in columns_info if col[1] != 'id']
+        print("\nДоступные столбцы для сортировки:")
+        for i, col in enumerate(self.data.columns, 1):
+            print(f"  {i}. {col}")
         
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Сортировка")
-        dialog.geometry("300x150")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ttk.Label(dialog, text="Колонка:").pack(pady=5)
-        column_var = tk.StringVar(value=col_names[0] if col_names else "")
-        column_combo = ttk.Combobox(dialog, textvariable=column_var, values=col_names, width=30)
-        column_combo.pack(pady=5)
-        
-        ttk.Label(dialog, text="Порядок:").pack(pady=5)
-        order_var = tk.StringVar(value="ASC")
-        ttk.Radiobutton(dialog, text="По возрастанию", variable=order_var, value="ASC").pack()
-        ttk.Radiobutton(dialog, text="По убыванию", variable=order_var, value="DESC").pack()
-        
-        def sort():
-            column = column_var.get()
-            order = order_var.get()
-            if column:
-                records = self.db.sort_records(self.current_table, column, order)
-                self._display_search_results(records)
-                self.status_label.config(text=f"Сортировка по {column} {order}")
-                dialog.destroy()
+        try:
+            col_choice = int(input("\nВыберите номер столбца: ")) - 1
+            if 0 <= col_choice < len(self.data.columns):
+                col_name = self.data.columns[col_choice]
+                ascending = input("Сортировать по возрастанию? (да/нет): ").strip().lower() == 'да'
+                
+                self.data = self.data.sort_values(by=col_name, ascending=ascending).reset_index(drop=True)
+                print(f"✅ Данные отсортированы по столбцу '{col_name}'")
+                self.view_data()
             else:
-                messagebox.showwarning("Внимание", "Выберите колонку")
+                print("❌ Неверный номер столбца")
+                
+        except ValueError:
+            print("❌ Введите корректный номер")
+    
+    def filter_data(self):
+        """Фильтрация данных"""
+        if self.data is None or len(self.data) == 0:
+            print("❌ Нет данных для фильтрации")
+            return
         
-        ttk.Button(dialog, text="Сортировать", command=sort).pack(pady=10)
+        print("\nДоступные столбцы для фильтрации:")
+        for i, col in enumerate(self.data.columns, 1):
+            print(f"  {i}. {col}")
+        
+        try:
+            col_choice = int(input("\nВыберите номер столбца: ")) - 1
+            if 0 <= col_choice < len(self.data.columns):
+                col_name = self.data.columns[col_choice]
+                value = input(f"Введите значение для фильтрации в столбце '{col_name}': ").strip()
+                
+                filtered_data = self.data[self.data[col_name].astype(str).str.contains(value, case=False, na=False)]
+                
+                if len(filtered_data) > 0:
+                    print(f"\n✅ Найдено {len(filtered_data)} записей:")
+                    print(filtered_data.to_string(index=False))
+                    
+                    if input("\nСохранить отфильтрованные данные как новую таблицу? (да/нет): ").strip().lower() == 'да':
+                        self.data = filtered_data.reset_index(drop=True)
+                        print("✅ Отфильтрованные данные сохранены как основная таблица")
+                else:
+                    print("❌ Записей не найдено")
+            else:
+                print("❌ Неверный номер столбца")
+                
+        except ValueError:
+            print("❌ Введите корректный номер")
     
     def visualize_data(self):
         """Визуализация данных"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
+        if self.data is None or len(self.data) == 0:
+            print("❌ Нет данных для визуализации")
             return
         
-        if not MATPLOTLIB_AVAILABLE:
-            messagebox.showinfo("Информация", "Библиотека matplotlib не установлена.\nУстановите: pip install matplotlib")
-            return
+        print("\n" + "="*50)
+        print("📊 ВИЗУАЛИЗАЦИЯ ДАННЫХ")
+        print("="*50)
         
-        records = self.db.get_all_records(self.current_table)
-        columns_info = self.db.get_table_columns(self.current_table)
-        col_names = [col[1] for col in columns_info]
+        print("\nТипы диаграмм:")
+        print("  1. Гистограмма (для числовых данных)")
+        print("  2. Столбчатая диаграмма")
+        print("  3. Круговая диаграмма")
+        print("  4. Точечная диаграмма")
+        print("  5. Тепловая карта корреляции")
         
-        # Простая визуализация - количество записей
-        plt.figure(figsize=(8, 6))
-        plt.bar(range(len(records)), [1] * len(records))
-        plt.xlabel('Запись')
-        plt.ylabel('Значение')
-        plt.title(f'Данные таблицы: {self.current_table}')
-        plt.tight_layout()
-        plt.show()
-        
-        self.status_label.config(text="Визуализация выполнена")
+        try:
+            chart_type = int(input("\nВыберите тип диаграммы (1-5): "))
+            
+            plt.figure(figsize=(12, 8))
+            
+            if chart_type == 1:
+                numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    for i, col in enumerate(numeric_cols[:4], 1):
+                        plt.subplot(2, 2, i)
+                        self.data[col].hist(bins=10, edgecolor='black', color='skyblue')
+                        plt.title(f'Гистограмма: {col}')
+                        plt.xlabel(col)
+                        plt.ylabel('Частота')
+                else:
+                    print("❌ Нет числовых столбцов для гистограммы")
+                    return
+                    
+            elif chart_type == 2:
+                col = input("Введите название столбца для анализа: ").strip()
+                if col in self.data.columns:
+                    self.data[col].value_counts().plot(kind='bar', color='coral')
+                    plt.title(f'Столбчатая диаграмма: {col}')
+                    plt.xlabel(col)
+                    plt.ylabel('Количество')
+                    plt.xticks(rotation=45)
+                else:
+                    print("❌ Столбец не найден")
+                    return
+                    
+            elif chart_type == 3:
+                col = input("Введите название столбца для анализа: ").strip()
+                if col in self.data.columns:
+                    self.data[col].value_counts().plot(kind='pie', autopct='%1.1f%%', colors=['gold', 'lightcoral', 'lightskyblue'])
+                    plt.title(f'Круговая диаграмма: {col}')
+                    plt.ylabel('')
+                else:
+                    print("❌ Столбец не найден")
+                    return
+                    
+            elif chart_type == 4:
+                numeric_cols = list(self.data.select_dtypes(include=[np.number]).columns)
+                if len(numeric_cols) >= 2:
+                    print(f"Числовые столбцы: {numeric_cols}")
+                    x_col = input("Введите столбец для оси X: ").strip()
+                    y_col = input("Введите столбец для оси Y: ").strip()
+                    if x_col in numeric_cols and y_col in numeric_cols:
+                        plt.scatter(self.data[x_col], self.data[y_col], alpha=0.6, color='green')
+                        plt.xlabel(x_col)
+                        plt.ylabel(y_col)
+                        plt.title(f'Точечная диаграмма: {x_col} vs {y_col}')
+                    else:
+                        print("❌ Указаны нечисловые столбцы")
+                        return
+                else:
+                    print("❌ Нужно минимум 2 числовых столбца")
+                    return
+                    
+            elif chart_type == 5:
+                numeric_data = self.data.select_dtypes(include=[np.number])
+                if len(numeric_data.columns) > 1:
+                    corr_matrix = numeric_data.corr()
+                    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, fmt='.2f')
+                    plt.title('Тепловая карта корреляции')
+                else:
+                    print("❌ Нужно минимум 2 числовых столбца для корреляции")
+                    return
+            else:
+                print("❌ Неверный тип диаграммы")
+                return
+            
+            plt.tight_layout()
+            plt.show()
+            
+        except ValueError:
+            print("❌ Введите корректное значение")
+        except Exception as e:
+            print(f"❌ Ошибка при создании диаграммы: {e}")
     
     def generate_report(self):
-        """Генерация отчёта"""
-        if not self.current_table:
-            messagebox.showwarning("Внимание", "Выберите таблицу")
+        """Генерация отчета"""
+        if self.data is None:
+            print("❌ Нет данных для отчета")
             return
         
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text Files", "*.txt"), ("HTML Files", "*.html"), ("All Files", "*.*")],
-            title="Сохранить отчёт"
-        )
+        print("\n" + "="*50)
+        print("📝 ГЕНЕРАЦИЯ ОТЧЕТА")
+        print("="*50)
         
-        if file_path:
-            try:
-                records = self.db.get_all_records(self.current_table)
-                columns_info = self.db.get_table_columns(self.current_table)
-                col_names = [col[1] for col in columns_info]
-                
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"=== ОТЧЁТ ПО ТАБЛИЦЕ: {self.current_table} ===\n\n")
-                    f.write(f"Дата генерации: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"Всего записей: {len(records)}\n\n")
-                    f.write("Структура таблицы:\n")
-                    for col in columns_info:
-                        f.write(f"  - {col[1]} ({col[2]})\n")
-                    f.write("\nДанные:\n")
-                    f.write("-" * 80 + "\n")
-                    f.write(" | ".join(col_names) + "\n")
-                    f.write("-" * 80 + "\n")
-                    for record in records:
-                        f.write(" | ".join(str(v) for v in record) + "\n")
-                    f.write("-" * 80 + "\n")
-                
-                self.status_label.config(text=f"Отчёт сохранён: {os.path.basename(file_path)}")
-                messagebox.showinfo("Успех", "Отчёт успешно создан!")
-                
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось создать отчёт: {e}")
+        report = []
+        report.append("="*60)
+        report.append(f"ОТЧЕТ ПО БАЗЕ ДАННЫХ: {self.current_table_name}")
+        report.append(f"Дата создания: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append("="*60)
+        
+        # Общая информация
+        report.append(f"\n1. ОБЩАЯ ИНФОРМАЦИЯ")
+        report.append(f"   - Количество записей: {len(self.data)}")
+        report.append(f"   - Количество полей: {len(self.data.columns)}")
+        report.append(f"   - Поля: {', '.join(self.data.columns)}")
+        
+        # Статистика по числовым полям
+        numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 0:
+            report.append(f"\n2. СТАТИСТИКА ПО ЧИСЛОВЫМ ПОЛЯМ")
+            for col in numeric_cols:
+                report.append(f"\n   Поле: {col}")
+                report.append(f"     - Минимум: {self.data[col].min()}")
+                report.append(f"     - Максимум: {self.data[col].max()}")
+                report.append(f"     - Среднее: {self.data[col].mean():.2f}")
+                report.append(f"     - Медиана: {self.data[col].median()}")
+        
+        # Статистика по текстовым полям
+        text_cols = self.data.select_dtypes(include=['object']).columns
+        if len(text_cols) > 0:
+            report.append(f"\n3. СТАТИСТИКА ПО ТЕКСТОВЫМ ПОЛЯМ")
+            for col in text_cols:
+                report.append(f"\n   Поле: {col}")
+                report.append(f"     - Уникальных значений: {self.data[col].nunique()}")
+                if len(self.data[col].dropna()) > 0:
+                    report.append(f"     - Самое частое значение: {self.data[col].mode().iloc[0] if len(self.data[col].mode()) > 0 else 'Нет'}")
+        
+        # Первые 10 записей
+        report.append(f"\n4. ПЕРВЫЕ 10 ЗАПИСЕЙ")
+        report.append("-" * 60)
+        for i, row in self.data.head(10).iterrows():
+            report.append(f"   {i}: " + " | ".join([f"{col}: {val}" for col, val in row.items()]))
+        
+        report.append("\n" + "="*60)
+        report.append("КОНЕЦ ОТЧЕТА")
+        report.append("="*60)
+        
+        # Вывод отчета
+        print("\n".join(report))
+        
+        # Сохранение отчета
+        save_choice = input("\nСохранить отчет в файл? (да/нет): ").strip().lower()
+        if save_choice == 'да':
+            filename = f"report_{self.current_table_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("\n".join(report))
+            print(f"✅ Отчет сохранен в файл {filename}")
+            print("📥 Скачайте файл из панели файлов Colab")
     
-    def on_closing(self):
-        """Обработка закрытия приложения"""
-        self.db.close()
-        self.root.destroy()
+    def save_to_csv(self):
+        """Сохранение в CSV файл"""
+        if self.data is None:
+            print("❌ Нет данных для сохранения")
+            return
+        
+        filename = f"{self.current_table_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        self.data.to_csv(filename, index=False)
+        print(f"✅ Данные сохранены в файл {filename}")
+        print("📥 Скачайте файл из панели файлов Colab")
 
+
+# ============================================
+# ЧАСТЬ 3: ГЛАВНАЯ ПРОГРАММА
+# ============================================
 
 def main():
-    """Точка входа в приложение"""
-    root = tk.Tk()
-    app = DatabaseApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    root.mainloop()
+    """Главная функция программы"""
+    
+    print("="*60)
+    print("🏢 СИСТЕМА УПРАВЛЕНИЯ БАЗАМИ ДАННЫХ")
+    print("Лабораторная работа №6")
+    print("="*60)
+    
+    # Создаем тестовую базу данных
+    print("\n📦 Загрузка тестовой базы данных...")
+    sample_data, sample_name = create_sample_database()
+    
+    # Инициализируем менеджер с тестовыми данными
+    db = DatabaseManager(sample_data, sample_name)
+    
+    print("\n" + "="*60)
+    print("✅ ТЕСТОВАЯ БАЗА ДАННЫХ ЗАГРУЖЕНА!")
+    print(f"📊 Название: {sample_name}")
+    print(f"📊 Размер: {sample_data.shape[0]} строк × {sample_data.shape[1]} столбцов")
+    print("="*60)
+    
+    while True:
+        print("\n" + "="*50)
+        print("📌 ГЛАВНОЕ МЕНЮ")
+        print("="*50)
+        print("1.  Создать новую базу данных")
+        print("2.  Просмотр текущей базы данных")
+        print("3.  Добавить запись")
+        print("4.  Обновить запись")
+        print("5.  Удалить запись")
+        print("6.  Сортировка данных")
+        print("7.  Фильтрация данных")
+        print("8.  Визуализация данных")
+        print("9.  Сгенерировать отчет")
+        print("10. Сохранить в CSV")
+        print("0.  Выход")
+        print("-" * 50)
+        print(f"📁 Текущая БД: {db.current_table_name}")
+        if db.data is not None:
+            print(f"📊 Записей: {len(db.data)}")
+        print("="*50)
+        
+        choice = input("\n🔹 Выберите действие (0-10): ").strip()
+        
+        if choice == '1':
+            db.create_database()
+        elif choice == '2':
+            db.view_data()
+        elif choice == '3':
+            db.add_record()
+        elif choice == '4':
+            db.update_record()
+        elif choice == '5':
+            db.delete_record()
+        elif choice == '6':
+            db.sort_data()
+        elif choice == '7':
+            db.filter_data()
+        elif choice == '8':
+            db.visualize_data()
+        elif choice == '9':
+            db.generate_report()
+        elif choice == '10':
+            db.save_to_csv()
+        elif choice == '0':
+            print("\n👋 Программа завершена. До свидания!")
+            break
+        else:
+            print("❌ Неверный выбор. Пожалуйста, выберите действие от 0 до 10.")
 
-
+# Запуск программы
 if __name__ == "__main__":
     main()
